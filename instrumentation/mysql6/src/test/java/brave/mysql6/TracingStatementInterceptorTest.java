@@ -1,17 +1,14 @@
 package brave.mysql6;
 
 import brave.Span;
-
-import java.sql.SQLException;
-import java.util.Properties;
-
 import com.mysql.cj.api.jdbc.JdbcConnection;
 import com.mysql.cj.jdbc.DatabaseMetaData;
+import java.sql.SQLException;
+import java.util.Properties;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.runners.MockitoJUnitRunner;
-import zipkin2.Endpoint;
 
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
@@ -27,52 +24,44 @@ public class TracingStatementInterceptorTest {
   @Mock Span span;
   String url = "jdbc:mysql://myhost:5555/mydatabase";
 
-  @Test public void parseServerAddress_ipFromHost_portFromUrl() throws SQLException {
-    setupAndReturnPropertiesForHost("127.0.0.1");
+  @Test public void parseServerIpPort_ipFromHost_portFromUrl() throws SQLException {
+    setupAndReturnPropertiesForHost("1.2.3.4");
 
-    TracingStatementInterceptor.parseServerAddress(connection, span);
+    TracingStatementInterceptor.parseServerIpPort(connection, span);
 
-    verify(span).remoteEndpoint(Endpoint.newBuilder().serviceName("mysql")
-        .ip("127.0.0.1").port(5555).build());
+    verify(span).remoteServiceName("mysql");
+    verify(span).parseRemoteIpAndPort("1.2.3.4", 5555);
   }
 
-  @Test public void parseServerAddress_serviceNameFromDatabaseName() throws SQLException {
-    setupAndReturnPropertiesForHost("127.0.0.1");
+  @Test public void parseServerIpPort_serviceNameFromDatabaseName() throws SQLException {
+    setupAndReturnPropertiesForHost("1.2.3.4");
     when(connection.getCatalog()).thenReturn("mydatabase");
 
-    TracingStatementInterceptor.parseServerAddress(connection, span);
+    TracingStatementInterceptor.parseServerIpPort(connection, span);
 
-    verify(span).remoteEndpoint(Endpoint.newBuilder().serviceName("mysql-mydatabase")
-        .ip("127.0.0.1").port(5555).build());
+    verify(span).remoteServiceName("mysql-mydatabase");
+    verify(span).parseRemoteIpAndPort("1.2.3.4", 5555);
   }
 
-  @Test public void parseServerAddress_propertiesOverrideServiceName() throws SQLException {
-    setupAndReturnPropertiesForHost("127.0.0.1").setProperty("zipkinServiceName", "foo");
+  @Test public void parseServerIpPort_propertiesOverrideServiceName() throws SQLException {
+    setupAndReturnPropertiesForHost("1.2.3.4").setProperty("zipkinServiceName", "foo");
 
-    TracingStatementInterceptor.parseServerAddress(connection, span);
+    TracingStatementInterceptor.parseServerIpPort(connection, span);
 
-    verify(span).remoteEndpoint(Endpoint.newBuilder().serviceName("foo")
-        .ip("127.0.0.1").port(5555).build());
+    verify(span).remoteServiceName("foo");
+    verify(span).parseRemoteIpAndPort("1.2.3.4", 5555);
   }
 
-  @Test public void parseServerAddress_emptyZipkinServiceNameIgnored() throws SQLException {
-    setupAndReturnPropertiesForHost("127.0.0.1").setProperty("zipkinServiceName", "");
+  @Test public void parseServerIpPort_emptyZipkinServiceNameIgnored() throws SQLException {
+    setupAndReturnPropertiesForHost("1.2.3.4").setProperty("zipkinServiceName", "");
 
-    TracingStatementInterceptor.parseServerAddress(connection, span);
+    TracingStatementInterceptor.parseServerIpPort(connection, span);
 
-    verify(span).remoteEndpoint(Endpoint.newBuilder().serviceName("mysql")
-        .ip("127.0.0.1").port(5555).build());
+    verify(span).remoteServiceName("mysql");
+    verify(span).parseRemoteIpAndPort("1.2.3.4", 5555);
   }
 
-  @Test public void parseServerAddress_doesntNsLookup() throws SQLException {
-    setupAndReturnPropertiesForHost("localhost");
-
-    TracingStatementInterceptor.parseServerAddress(connection, span);
-    verify(span).remoteEndpoint(Endpoint.newBuilder().serviceName("mysql")
-        .port(5555).build());
-  }
-
-  @Test public void parseServerAddress_doesntCrash() throws SQLException {
+  @Test public void parseServerIpPort_doesntCrash() throws SQLException {
     when(connection.getMetaData()).thenThrow(new SQLException());
 
     verifyNoMoreInteractions(span);

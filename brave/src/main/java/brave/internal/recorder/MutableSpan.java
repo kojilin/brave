@@ -2,6 +2,7 @@ package brave.internal.recorder;
 
 import brave.Span.Kind;
 import brave.Tracer;
+import brave.internal.Nullable;
 import brave.propagation.TraceContext;
 import java.util.ArrayList;
 import java.util.List;
@@ -15,6 +16,7 @@ import zipkin2.Span;
  * mutated without synchronization.
  */
 public final class MutableSpan {
+  static final MutableEndpoint EMPTY_ENDPOINT = new MutableEndpoint();
   /*
    * One of these objects is allocated for each in-flight span, so we try to be parsimonious on things
    * like array allocation and object reference size.
@@ -23,7 +25,7 @@ public final class MutableSpan {
   boolean shared;
   long startTimestamp, finishTimestamp;
   String name;
-  Endpoint localEndpoint, remoteEndpoint;
+  MutableEndpoint remoteEndpoint;
   /**
    * To reduce the amount of allocation, collocate annotations with tags in a pair-indexed list.
    * This will be (startTimestamp, value) for annotations and (key, value) for tags.
@@ -45,6 +47,22 @@ public final class MutableSpan {
   public void kind(Kind kind) {
     if (kind == null) throw new NullPointerException("kind == null");
     this.kind = kind;
+  }
+
+  /** @see brave.Span#remoteServiceName(String) */
+  public void remoteServiceName(String remoteServiceName) {
+    if (remoteServiceName == null) throw new NullPointerException("remoteServiceName == null");
+    if (remoteEndpoint == null) remoteEndpoint = new MutableEndpoint();
+    remoteEndpoint.serviceName(remoteServiceName);
+  }
+
+  /** @see brave.Span#parseRemoteIpAndPort(String, int) */
+  public boolean parseRemoteIpAndPort(@Nullable String remoteIp, int remotePort) {
+    if (remoteIp == null) return false;
+    if (remoteEndpoint == null) remoteEndpoint = new MutableEndpoint();
+    remoteEndpoint.ip(remoteIp);
+    remoteEndpoint.port(remotePort);
+    return remoteEndpoint.ip != null;
   }
 
   /** @see brave.Span#annotate(String) */
@@ -70,18 +88,6 @@ public final class MutableSpan {
     pairs.add(value);
   }
 
-  /** @see brave.Tracing.Builder#endpoint */
-  public void localEndpoint(Endpoint localEndpoint) {
-    if (localEndpoint == null) throw new NullPointerException("localEndpoint == null");
-    this.localEndpoint = localEndpoint;
-  }
-
-  /** @see brave.Span#remoteEndpoint(Endpoint) */
-  public void remoteEndpoint(Endpoint remoteEndpoint) {
-    if (remoteEndpoint == null) throw new NullPointerException("remoteEndpoint == null");
-    this.remoteEndpoint = remoteEndpoint;
-  }
-
   /**
    * Indicates we are contributing to a span started by another tracer (ex on a different host).
    * Defaults to false.
@@ -101,8 +107,7 @@ public final class MutableSpan {
   // Since this is not exposed, this class could be refactored later as needed to act in a pool
   // to reduce GC churn. This would involve calling span.clear and resetting the fields below.
   public void writeTo(zipkin2.Span.Builder result) {
-    result.localEndpoint(localEndpoint);
-    result.remoteEndpoint(remoteEndpoint);
+    result.remoteEndpoint(toZipkinEndpoint(remoteEndpoint));
     result.name(name);
     result.timestamp(startTimestamp);
     if (startTimestamp != 0 && finishTimestamp != 0L) {
@@ -121,6 +126,15 @@ public final class MutableSpan {
       }
     }
     if (shared) result.shared(true);
+  }
+
+  @Nullable static Endpoint toZipkinEndpoint(MutableEndpoint endpoint) {
+    if (endpoint == null || EMPTY_ENDPOINT.equals(endpoint)) return null;
+    return Endpoint.newBuilder()
+        .serviceName(endpoint.serviceName)
+        .ip(endpoint.ip)
+        .port(endpoint.port)
+        .build();
   }
 
   MutableSpan(){ // intentionally hidden

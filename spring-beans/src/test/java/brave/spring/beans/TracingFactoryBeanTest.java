@@ -49,7 +49,7 @@ public class TracingFactoryBeanTest {
     );
 
     assertThat(context.getBean("tracing", Tracing.class))
-        .extracting("tracer.pendingSpans.endpoint")
+        .extracting("tracer.pendingSpans.localZipkinEndpoint")
         .extracting("serviceName")
         .containsExactly("brave-webmvc-example");
   }
@@ -68,7 +68,7 @@ public class TracingFactoryBeanTest {
     );
 
     assertThat(context.getBean("tracing", Tracing.class))
-        .extracting("tracer.pendingSpans.endpoint")
+        .extracting("tracer.pendingSpans.localZipkinEndpoint")
         .containsExactly(Endpoint.newBuilder()
             .serviceName("brave-webmvc-example")
             .ip("1.2.3.4")
@@ -89,7 +89,7 @@ public class TracingFactoryBeanTest {
     );
 
     assertThat(context.getBean("tracing", Tracing.class))
-        .extracting("tracer.pendingSpans.endpoint")
+        .extracting("tracer.pendingSpans.localZipkinEndpoint")
         .containsExactly(Endpoint.newBuilder()
             .serviceName("brave-webmvc-example")
             .ip("1.2.3.4")

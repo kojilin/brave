@@ -14,7 +14,6 @@ import com.alibaba.dubbo.rpc.service.GenericService;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
-import zipkin2.Endpoint;
 
 class TestServer {
   BlockingQueue<Long> delayQueue = new LinkedBlockingQueue<>();
@@ -25,8 +24,7 @@ class TestServer {
   String linkLocalIp;
 
   TestServer() {
-    Endpoint local = Platform.get().endpoint();
-    linkLocalIp = local.ipv4() != null ? local.ipv4() : local.ipv6();
+    linkLocalIp = Platform.get().linkLocalIp();
     service = new ServiceConfig<>();
     service.setApplication(new ApplicationConfig("bean-provider"));
     service.setRegistry(new RegistryConfig(RegistryConfig.NO_AVAILABLE));

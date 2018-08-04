@@ -2,8 +2,9 @@ package brave;
 
 import brave.internal.Nullable;
 import brave.internal.Platform;
-import brave.internal.recorder.PendingSpans;
+import brave.internal.recorder.MutableEndpoint;
 import brave.internal.recorder.MutableSpan;
+import brave.internal.recorder.PendingSpans;
 import brave.propagation.B3Propagation;
 import brave.propagation.CurrentTraceContext;
 import brave.propagation.Propagation;
@@ -124,8 +125,8 @@ public abstract class Tracing implements Closeable {
   @Override abstract public void close();
 
   public static final class Builder {
-    String localServiceName;
-    Endpoint endpoint;
+    String localServiceName = "unknown", localIp;
+    int localPort; // zero means null
     Reporter<zipkin2.Span> reporter;
     Clock clock;
     Sampler sampler = Sampler.ALWAYS_SAMPLE;
@@ -136,10 +137,13 @@ public abstract class Tracing implements Closeable {
     ErrorParser errorParser = new ErrorParser();
 
     /**
-     * Controls the name of the service being traced, while still using a default site-local IP.
-     * This is an alternative to {@link #endpoint(Endpoint)}.
+     * Lower-case label of the remote node in the service graph, such as "favstar". Avoid names with
+     * variables or unique identifiers embedded. Defaults to "unknown".
      *
-     * @param localServiceName name of the service being traced. Defaults to "unknown".
+     * <p>This is a primary label for trace lookup and aggregation, so it should be intuitive and
+     * consistent. Many use a name from service discovery.
+     *
+     * @see #localIp(String)
      */
     public Builder localServiceName(String localServiceName) {
       if (localServiceName == null) throw new NullPointerException("localServiceName == null");
@@ -148,14 +152,44 @@ public abstract class Tracing implements Closeable {
     }
 
     /**
-     * Sets the {@link zipkin2.Span#localEndpoint Endpoint of the local service} being traced.
-     * Defaults to a site local IP.
+     * The text representation of the primary IP address associated with this service. Ex.
+     * 192.168.99.100 or 2001:db8::c001. Defaults to a link local IP.
      *
-     * <p>Use {@link #localServiceName} when only effecting the service name.
+     * @see #localServiceName(String)
+     * @see #localPort(int)
+     * @since 5.2
      */
+    public Builder localIp(String localIp) {
+      if (localIp == null) throw new NullPointerException("localIp == null");
+      this.localIp = localIp;
+      return this;
+    }
+
+    /**
+     * The primary listen port associated with this service. No default.
+     *
+     * @see #localIp(String)
+     * @since 5.2
+     */
+    public Builder localPort(int localPort) {
+      if (localPort > 0xffff) throw new IllegalArgumentException("invalid localPort " + localPort);
+      if (localPort < 0) localPort = 0;
+      this.localPort = localPort;
+      return this;
+    }
+
+    /**
+     * Sets the {@link zipkin2.Span#localEndpoint Endpoint of the local service} being traced.
+     *
+     * @deprecated Use {@link #localServiceName(String)} {@link #localIp(String)} and {@link
+     * #localPort(int)}. Will be removed in Brave v6.
+     */
+    @Deprecated
     public Builder endpoint(Endpoint endpoint) {
       if (endpoint == null) throw new NullPointerException("endpoint == null");
-      this.endpoint = endpoint;
+      this.localServiceName = endpoint.serviceName();
+      this.localIp = endpoint.ipv6() != null? endpoint.ipv6() : endpoint.ipv4();
+      this.localPort = endpoint.portAsInt();
       return this;
     }
 
@@ -265,12 +299,7 @@ public abstract class Tracing implements Closeable {
 
     public Tracing build() {
       if (clock == null) clock = Platform.get().clock();
-      if (endpoint == null) {
-        endpoint = Platform.get().endpoint();
-        if (localServiceName != null) {
-          endpoint = endpoint.toBuilder().serviceName(localServiceName).build();
-        }
-      }
+      if (localIp == null) localIp = Platform.get().linkLocalIp();
       if (reporter == null) reporter = Platform.get().reporter();
       return new Default(this);
     }
@@ -295,12 +324,21 @@ public abstract class Tracing implements Closeable {
       this.stringPropagation = builder.propagationFactory.create(Propagation.KeyFactory.STRING);
       this.currentTraceContext = builder.currentTraceContext;
       this.sampler = builder.sampler;
-      SpanReporter reporter = new SpanReporter(builder.reporter, noop);
+      MutableEndpoint localEndpoint = new MutableEndpoint();
+      localEndpoint.serviceName(builder.localServiceName);
+      localEndpoint.ip(builder.localIp);
+      localEndpoint.port(builder.localPort);
+      Endpoint localZipkinEndpoint = Endpoint.newBuilder()
+          .serviceName(localEndpoint.serviceName())
+          .ip(localEndpoint.ip())
+          .port(localEndpoint.port())
+          .build();
+      SpanReporter reporter = new SpanReporter(localZipkinEndpoint, builder.reporter, noop);
       this.tracer = new Tracer(
           builder.clock,
           builder.propagationFactory,
           reporter,
-          new PendingSpans(builder.endpoint, clock, reporter, noop),
+          new PendingSpans(localZipkinEndpoint, clock, reporter, noop),
           builder.sampler,
           builder.errorParser,
           builder.currentTraceContext,
@@ -358,10 +396,12 @@ public abstract class Tracing implements Closeable {
   static final class SpanReporter implements Reporter<zipkin2.Span> {
     static final Logger logger = Logger.getLogger(SpanReporter.class.getName());
 
-    final AtomicBoolean noop;
+    final Endpoint localZipkinEndpoint;
     final Reporter<zipkin2.Span> delegate;
+    final AtomicBoolean noop;
 
-    SpanReporter(Reporter<zipkin2.Span> delegate, AtomicBoolean noop) {
+    SpanReporter(Endpoint localZipkinEndpoint, Reporter<zipkin2.Span> delegate, AtomicBoolean noop) {
+      this.localZipkinEndpoint = localZipkinEndpoint;
       this.delegate = delegate;
       this.noop = noop;
     }
@@ -371,6 +411,7 @@ public abstract class Tracing implements Closeable {
           .traceId(context.traceIdHigh(), context.traceId())
           .parentId(context.parentIdAsLong())
           .id(context.spanId())
+          .localEndpoint(localZipkinEndpoint)
           .debug(context.debug());
 
       span.writeTo(builderWithContextData);

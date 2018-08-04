@@ -20,6 +20,10 @@ import zipkin2.Endpoint;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Matchers.eq;
 import static org.mockito.Matchers.isA;
+import static org.mockito.Mockito.doCallRealMethod;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 @RunWith(MockitoJUnitRunner.class)
@@ -43,11 +47,25 @@ public class HttpServerHandlerTest {
     handler = HttpServerHandler.create(httpTracing, adapter);
 
     when(adapter.method(request)).thenReturn("GET");
-    when(adapter.parseClientAddress(eq(request), isA(Endpoint.Builder.class))).thenCallRealMethod();
+    doCallRealMethod().when(adapter).parseClientIpPort(eq(request), isA(brave.Span.class));
   }
 
   @After public void close() {
     Tracing.current().close();
+  }
+
+  @Test public void handleStart_parsesTagsWithCustomizer() {
+    brave.Span span = mock(brave.Span.class);
+    brave.SpanCustomizer spanCustomizer = mock(brave.SpanCustomizer.class);
+    when(span.kind(Span.Kind.SERVER)).thenReturn(span);
+    when(adapter.method(request)).thenReturn("GET");
+    when(span.customizer()).thenReturn(spanCustomizer);
+
+    handler.handleStart(request, span);
+
+    verify(spanCustomizer).name("GET");
+    verify(spanCustomizer).tag("http.method", "GET");
+    verifyNoMoreInteractions(spanCustomizer);
   }
 
   @Test public void handleReceive_defaultsToMakeNewTrace() {

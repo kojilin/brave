@@ -9,6 +9,10 @@ final class HttpNettyAdapter extends HttpServerAdapter<HttpRequest, HttpResponse
     return request.method().name();
   }
 
+  @Override public String xForwardedForIp(HttpRequest httpRequest) {
+    return super.xForwardedForIp(httpRequest);
+  }
+
   @Override public String url(HttpRequest request) {
     String host = requestHeader(request, "Host");
     if (host == null) return null;
